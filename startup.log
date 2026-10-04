@@ -1,0 +1,5 @@
+2026-10-04 14:41:51,663 INFO main entered
+2026-10-04 14:41:51,685 INFO QApplication created
+2026-10-04 14:41:51,685 INFO settings and rules loaded
+2026-10-04 14:41:51,730 INFO login dialog shown
+2026-10-04 14:41:51,820 INFO database schema checked
