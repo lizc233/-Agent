@@ -21,6 +21,9 @@ class FailedGenerator(AnswerGenerator):
     def generate(self, question: str, order_status: str | None, rule: dict[str, object]) -> GeneratedAnswer:
         raise RuntimeError("simulated API failure")
 
+    def explain_refusal(self, question: str, reason: str) -> GeneratedAnswer:
+        raise RuntimeError("simulated API failure")
+
 
 class GenerationTest(unittest.TestCase):
     def test_online_answer_keeps_provider(self) -> None:
@@ -35,6 +38,21 @@ class GenerationTest(unittest.TestCase):
         self.assertEqual("offline-rule-template", result.provider)
         self.assertIn("simulated API failure", result.fallback_reason)
         self.assertIn("DELIVERY_TIMEOUT", result.answer)
+
+    def test_refusal_explanation_uses_second_online_generation(self) -> None:
+        class RefusalGenerator(SuccessfulGenerator):
+            def explain_refusal(self, question: str, reason: str) -> GeneratedAnswer:
+                return GeneratedAnswer("因为订单状态与规则范围不一致，请确认实际情况。", "deepseek-refusal-explanation")
+
+        result = FallbackAnswerGenerator(RefusalGenerator(), OfflineAnswerGenerator()).explain_refusal("问题", "订单状态不一致")
+        self.assertEqual("deepseek-refusal-explanation", result.provider)
+        self.assertNotIn("无法回答", result.answer)
+
+    def test_refusal_explanation_falls_back_when_api_fails(self) -> None:
+        result = FallbackAnswerGenerator(FailedGenerator(), OfflineAnswerGenerator()).explain_refusal("问题", "规则证据不足")
+        self.assertEqual("offline-refusal-explanation", result.provider)
+        self.assertIn("规则证据不足", result.answer)
+        self.assertNotIn("无法回答", result.answer)
 
 
 if __name__ == "__main__":

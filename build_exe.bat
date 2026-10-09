@@ -17,10 +17,12 @@ if not exist "%PROJECT_PYTHON%" (
   --name KangarooCustomerAgent ^
   --add-data "desktop\assets;desktop\assets" ^
   --add-data "data\knowledge;data\knowledge" ^
+  --add-data "skills;skills" ^
   --collect-all langgraph ^
   --collect-all langchain_core ^
   --collect-all sentence_transformers ^
   --collect-all transformers ^
+  --collect-all mcp ^
   run_app.py
 
 if errorlevel 1 (
@@ -30,5 +32,6 @@ if errorlevel 1 (
 )
 
 copy /Y ".env.example" "dist\KangarooCustomerAgent\.env.example" >nul
+if exist ".env" copy /Y ".env" "dist\KangarooCustomerAgent\.env" >nul
 echo Build complete: dist\KangarooCustomerAgent\KangarooCustomerAgent.exe
 endlocal

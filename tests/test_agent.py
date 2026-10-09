@@ -38,6 +38,39 @@ class FakeOrderTools:
         self.events.append((question, action, source_rule_id))
 
 
+class FakeCaseTools:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, str, str | None]] = []
+
+    def create_case(self, order_code: str, issue_type: str, summary: str, required_evidence: str | None = None):
+        from backend.case_tools import CaseResult
+
+        self.calls.append((order_code, issue_type, summary, required_evidence))
+        return CaseResult(True, "CASE_CREATED", "created", {"case_code": "AS100", "created": True})
+
+
+class FakeConversationMemory:
+    def __init__(self) -> None:
+        self.context: dict[str, object] = {}
+        self.turns: list[dict[str, object]] = []
+
+    def get_context(self, session_id: int) -> dict[str, object]:
+        return dict(self.context)
+
+    def update_context(self, session_id: int, **values: object) -> None:
+        self.context.update(values)
+
+    def recent_turns(self, session_id: int, limit: int = 5) -> list[dict[str, object]]:
+        return self.turns[-limit:]
+
+    def recall(self, query: str) -> list[object]:
+        return []
+
+    def remember(self, session_id: int, summary: str, **values: object) -> int:
+        self.turns.append({"summary": summary, **values})
+        return len(self.turns)
+
+
 class CustomerServiceAgentTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -109,6 +142,61 @@ class CustomerServiceAgentTest(unittest.TestCase):
         self.assertEqual("delivery_incident_damage_001", result["sources"][0]["rule_id"])
         self.assertEqual("embedding", result["retrieval"]["method"])
         self.assertEqual("BAAI/bge-m3", result["retrieval"]["model"])
+
+    def test_supervisor_reports_professional_agent_runs(self) -> None:
+        tools = FakeOrderTools({"OD202610010001": "DELIVERING"})
+        result = CustomerServiceAgent(tools, self.retriever).invoke("OD202610010001 配送超时了")
+        agents = {run["agent"] for run in result["agent_runs"]}
+        self.assertEqual({"OrderAgent", "PolicyAgent", "RiskAgent"}, agents)
+        self.assertEqual("delivery-incident", result["selected_skill"])
+        self.assertTrue(all(run["thread_name"].startswith("kangaroo-agent") for run in result["agent_runs"]))
+
+    def test_evidence_reviewer_delegates_case_creation(self) -> None:
+        tools = FakeOrderTools({"OD202610010001": "DELIVERING"})
+        case_tools = FakeCaseTools()
+        result = CustomerServiceAgent(tools, self.retriever, case_tools=case_tools).invoke("OD202610010001 被外卖员弄洒了")
+        self.assertEqual(1, len(case_tools.calls))
+        self.assertEqual(("OD202610010001", "delivery_incident_damage"), case_tools.calls[0][:2])
+        self.assertIn("AS100", result["answer"])
+        self.assertTrue(result["evidence_review"]["approved"])
+
+    def test_status_conflict_does_not_block_answer(self) -> None:
+        tools = FakeOrderTools({"OD202610010001": "DELIVERING"})
+        result = CustomerServiceAgent(tools, self.retriever).invoke("OD202610010001 这个外卖有虫子")
+        self.assertEqual("answer", result["decision"])
+        self.assertEqual([], result.get("choices", []))
+
+    def test_confirmation_processes_actual_food_incident_without_status_update(self) -> None:
+        tools = FakeOrderTools({"OD202610010001": "DELIVERING"})
+        case_tools = FakeCaseTools()
+        result = CustomerServiceAgent(tools, self.retriever, case_tools=case_tools).invoke(
+            "我确认实际已收到餐品并发现异物，请按实际情况处理，不修改订单状态。订单 OD202610010001 这个外卖有虫子"
+        )
+        self.assertEqual("answer", result["decision"])
+        self.assertEqual("food_foreign_object_001", result["sources"][0]["rule_id"])
+        self.assertEqual(1, len(case_tools.calls))
+        self.assertEqual("DELIVERING", tools.orders["OD202610010001"])
+
+    def test_food_issue_does_not_require_status_confirmation(self) -> None:
+        tools = FakeOrderTools({"OD202610010001": "DELIVERING"})
+        agent = CustomerServiceAgent(tools, self.retriever)
+        result = agent.invoke("订单 OD202610010001 这个外卖有虫子")
+        self.assertEqual("answer", result["decision"])
+        self.assertEqual("food_foreign_object", result["intent"])
+
+    def test_selected_order_is_reused_for_next_open_question(self) -> None:
+        tools = FakeOrderTools({"OD202610010001": "DELIVERING", "OD202610010002": "COMPLETED"})
+        memory = FakeConversationMemory()
+        agent = CustomerServiceAgent(tools, self.retriever, memory=memory, memory_session_id=1)
+        first = agent.invoke("我的外卖被弄洒了")
+        self.assertEqual("clarify", first["decision"])
+        selected = first["choices"][0]
+        agent.invoke(f"{selected['question']}，订单号 {selected['value']}")
+        self.assertEqual(selected["value"], memory.context["current_order_code"])
+        tools.calls.clear()
+        agent.invoke("这个餐里还有异物")
+        self.assertEqual([selected["value"]], tools.calls)
+        self.assertIn("正式回复：", memory.turns[-1]["summary"])
 
 
 if __name__ == "__main__":

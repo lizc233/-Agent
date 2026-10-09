@@ -2,10 +2,85 @@ from __future__ import annotations
 
 from html import escape
 
-from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QMainWindow, QPushButton, QTextBrowser, QVBoxLayout, QWidget
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QPushButton, QScrollArea, QTextBrowser, QToolButton, QVBoxLayout, QWidget
 
 from .controller import AgentController
+
+
+class ResponseCard(QFrame):
+    choice_selected = Signal(str, str, str)
+
+    def __init__(self, result: dict, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("responseCard")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(8)
+        answer = QLabel(str(result.get("answer", "未生成回答")), self)
+        answer.setWordWrap(True)
+        answer.setObjectName("answerText")
+        layout.addWidget(answer)
+        sources = result.get("sources", [])
+        if sources:
+            links = "；".join(
+                f'<a href="{escape(str(item.get("url", "")), quote=True)}">{escape(str(item.get("title", "规则文档")))}</a>'
+                for item in sources
+            )
+            source = QLabel(f"依据：{links}", self)
+            source.setWordWrap(True)
+            source.setObjectName("sourceText")
+            source.setTextFormat(Qt.TextFormat.RichText)
+            source.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+            source.setOpenExternalLinks(True)
+            layout.addWidget(source)
+        detail_button = QToolButton(self)
+        detail_button.setText("查看可信依据与 Agent 执行详情")
+        detail_button.setCheckable(True)
+        detail_button.setArrowType(Qt.ArrowType.RightArrow)
+        detail_button.setObjectName("detailToggle")
+        layout.addWidget(detail_button, 0, Qt.AlignmentFlag.AlignLeft)
+        detail_browser = QTextBrowser(self)
+        detail_browser.setOpenExternalLinks(True)
+        detail_browser.setVisible(False)
+        detail_browser.setMaximumHeight(150)
+        detail_browser.setHtml(self._detail_html(result))
+        detail_button.toggled.connect(lambda checked: self._toggle_details(detail_button, detail_browser, checked))
+        layout.addWidget(detail_browser)
+        choices = result.get("choices", [])
+        self.choice_buttons: list[QPushButton] = []
+        if choices:
+            title = QLabel("请选择要继续处理的订单：", self)
+            title.setObjectName("choiceTitle")
+            layout.addWidget(title)
+            for choice in choices:
+                button = QPushButton(str(choice.get("label", choice.get("value", "选择"))), self)
+                button.setObjectName("orderChoice")
+                self.choice_buttons.append(button)
+                button.clicked.connect(lambda checked=False, item=choice, selected=button: self._select_choice(selected, item))
+                layout.addWidget(button)
+
+    def _select_choice(self, selected: QPushButton, choice: dict) -> None:
+        if not selected.isEnabled():
+            return
+        for button in self.choice_buttons:
+            button.setEnabled(False)
+            button.setProperty("selected", button is selected)
+            button.style().unpolish(button)
+            button.style().polish(button)
+        self.choice_selected.emit(str(choice.get("question", "")), str(choice.get("value", "")), str(choice.get("label", "选择")))
+
+    @staticmethod
+    def _toggle_details(button: QToolButton, browser: QTextBrowser, checked: bool) -> None:
+        browser.setVisible(checked)
+        button.setArrowType(Qt.ArrowType.DownArrow if checked else Qt.ArrowType.RightArrow)
+
+    @staticmethod
+    def _detail_html(result: dict) -> str:
+        runs = result.get("agent_runs", [])
+        run_text = "；".join(f"{escape(str(item.get('agent', 'Agent')))}：{'完成' if item.get('ok') else '失败'} {float(item.get('duration_ms', 0)):.1f}ms" for item in runs)
+        trace = " → ".join(escape(str(item)) for item in result.get("trace", []))
+        return f"<p><b>并行委派：</b>{run_text or '无'}</p><p><b>执行链路：</b>{trace or '无'}</p><p><b>任务规划：</b>{escape(str(result.get('planner_provider', 'local-policy')))}</p><p><b>决策：</b>{escape(str(result.get('decision', 'unknown')))}　<b>回答方式：</b>{escape(str(result.get('provider', 'unknown')))}</p>"
 
 
 class ChatWindow(QMainWindow):
@@ -17,132 +92,84 @@ class ChatWindow(QMainWindow):
         self.setWindowTitle("袋鼠可信客服")
         self.resize(620, 680)
         container = QWidget(self)
-        layout = QVBoxLayout(container)
-        self.identity_label = QLabel(f"当前账户：{user_label}", container)
+        root = QVBoxLayout(container)
+        identity = QLabel(f"当前账户 · {user_label}", container)
+        identity.setObjectName("identityLabel")
+        root.addWidget(identity)
+        self.scroll = QScrollArea(container)
         self.messages = QTextBrowser(container)
-        self.choice_container = QWidget(container)
-        self.choice_layout = QVBoxLayout(self.choice_container)
-        self.choice_layout.setContentsMargins(0, 4, 0, 4)
-        self.choice_container.hide()
-        self.messages.setOpenExternalLinks(True)
-        self.messages.setHtml(
-            "<div style='padding:8px 4px'>"
-            "<h2 style='color:#ef8b00;margin-bottom:4px'>袋鼠可信客服</h2>"
-            "<p style='color:#77664c'>订单问题会先查询 MySQL，再根据客服规则回答。</p>"
-            f"<p style='background:#edf8ef;padding:9px;border-radius:8px'>{escape(startup_message)}</p></div>"
-        )
+        self.messages.hide()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setObjectName("messageScroll")
+        self.message_host = QWidget(self.scroll)
+        self.message_layout = QVBoxLayout(self.message_host)
+        self.message_layout.setContentsMargins(6, 6, 6, 6)
+        self.message_layout.setSpacing(10)
+        self.message_layout.addStretch()
+        self.scroll.setWidget(self.message_host)
+        root.addWidget(self.scroll)
+        self._add_system_message(startup_message)
         input_layout = QHBoxLayout()
         self.question_input = QLineEdit(container)
-        self.question_input.setPlaceholderText("例如：订单 OD202610010002 配送超时了怎么办？")
+        self.question_input.setPlaceholderText("例如：我的订单配送超时了怎么办？")
         self.send_button = QPushButton("发送", container)
         input_layout.addWidget(self.question_input)
         input_layout.addWidget(self.send_button)
-        layout.addWidget(self.identity_label)
-        layout.addWidget(self.messages)
-        layout.addWidget(self.choice_container)
-        layout.addLayout(input_layout)
+        root.addLayout(input_layout)
         self.setCentralWidget(container)
-        container.setStyleSheet("QLabel { color:#665335; } QLineEdit { min-height:24px; }")
         self.send_button.clicked.connect(self._submit)
         self.question_input.returnPressed.connect(self._submit)
         self.controller.response_ready.connect(self._show_response)
         self.controller.response_failed.connect(self._show_error)
 
+    def _add_widget(self, widget: QWidget) -> None:
+        self.message_layout.insertWidget(self.message_layout.count() - 1, widget)
+        self.scroll.verticalScrollBar().setValue(self.scroll.verticalScrollBar().maximum())
+
+    def _add_system_message(self, message: str) -> None:
+        label = QLabel(message, self.message_host)
+        label.setWordWrap(True)
+        label.setObjectName("systemMessage")
+        self._add_widget(label)
+
     def _submit(self) -> None:
         question = self.question_input.text().strip()
         if not question or not self.send_button.isEnabled():
             return
-        self.append_user_message(question)
-        self.messages.append(
-            "<div style='color:#7b6849;padding:8px 12px'>"
-            "⏳ 正在识别问题 → 查询当前用户订单 → 检索客服规则 → 校验证据……</div>"
-        )
+        self._add_user_message(question)
+        self._add_system_message("正在识别问题 → 查询当前用户订单 → 检索客服规则 → 校验证据……")
         self.question_input.clear()
         self._set_busy(True)
         self.controller.submit(question)
 
     def _submit_choice(self, original_question: str, order_code: str, label: str) -> None:
-        self._clear_choices()
-        self.append_user_message(f"选择订单：{label}")
-        self.messages.append("<div style='color:#7b6849;padding:8px 12px'>⏳ 正在核验所选订单并继续处理……</div>")
+        self._add_user_message(f"选择订单：{label}")
+        self._add_system_message("正在核验所选订单并继续处理……")
         self._set_busy(True)
         self.controller.submit(f"{original_question}，订单号 {order_code}")
 
-    def _clear_choices(self) -> None:
-        while self.choice_layout.count():
-            item = self.choice_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-        self.choice_container.hide()
-
-    def _show_choices(self, choices: list[dict]) -> None:
-        self._clear_choices()
-        for choice in choices:
-            label = str(choice.get("label", choice.get("value", "选择")))
-            order_code = str(choice.get("value", ""))
-            original_question = str(choice.get("question", ""))
-            button = QPushButton(label, self.choice_container)
-            button.setStyleSheet("text-align:left;padding:10px;border:1px solid #efb34d;border-radius:8px;background:#fff8e8;")
-            button.clicked.connect(lambda checked=False, q=original_question, code=order_code, text=label: self._submit_choice(q, code, text))
-            self.choice_layout.addWidget(button)
-        self.choice_container.setVisible(bool(choices))
-
     def _show_response(self, result: dict) -> None:
-        answer = escape(str(result.get("answer", "未生成回答。")))
-        decision = escape(str(result.get("decision", "unknown")))
-        provider = escape(str(result.get("provider", "unknown")))
-        planner_provider = escape(str(result.get("planner_provider", "local-router")))
-        planner_fallback = result.get("planner_fallback_reason")
-        planner_status = "DeepSeek 已完成结构化任务规划" if planner_provider == "deepseek-planner" else "DeepSeek 规划不可用，已使用离线规划"
-        if planner_fallback:
-            planner_status += f"（{escape(str(planner_fallback))}）"
-        sources = result.get("sources", [])
-        source_html = ""
-        if sources:
-            links = [f'<a href="{escape(source["url"], quote=True)}">{escape(source["title"])}</a>（相似度 {float(source.get("score", 0)):.3f}）' for source in sources]
-            source_html = "<p><strong>规则依据：</strong>" + "、".join(links) + "</p>"
-        retrieval = result.get("retrieval", {})
-        retrieval_html = ""
-        if retrieval.get("method") == "embedding":
-            retrieval_html = f"<p style='color:#665335'><strong>语义检索：</strong>{escape(str(retrieval.get('model', 'BAAI/bge-m3')))} · 余弦相似度 {float(retrieval.get('score', 0)):.3f}</p>"
-        trace_names = {
-            "classify": "识别问题意图",
-            "query_order": "查询 MySQL 当前用户订单",
-            "retrieve_rule": "检索客服规则文档",
-            "validate_evidence": "校验回答依据",
-            "answer": "生成可信回答",
-            "clarify": "请求补充订单信息",
-            "reject": "执行权限拒绝",
-            "abstain": "执行知识不足拒答",
-            "handoff": "建议转人工",
-        }
-        trace = " → ".join(trace_names.get(step, escape(step)) for step in result.get("trace", []))
-        api_status = "DeepSeek API 调用成功" if provider == "deepseek" else "未调用 DeepSeek（本地策略）"
-        if provider == "offline-rule-template":
-            api_status = "DeepSeek 不可用，已离线降级"
-        fallback_reason = result.get("fallback_reason")
-        fallback_html = f"<p style='color:#8a5b00'>降级原因：{escape(str(fallback_reason))}</p>" if fallback_reason else ""
-        self.messages.append(
-            f"<div style='background:#fff3d6;padding:12px;margin:8px 0;border-left:4px solid #f4a51c;'>"
-            f"<p><strong>袋鼠：</strong>{answer}</p>{source_html}{retrieval_html}"
-            f"<p style='color:#665335'><strong>Agent 执行：</strong>{trace}</p>"
-            f"<p style='color:#665335'><strong>任务规划：</strong>{planner_status}</p>"
-            f"<p style='color:#666'>决策：{decision}｜回答方式：{provider}｜{api_status}</p>{fallback_html}</div>"
-        )
-        self._show_choices(result.get("choices", []))
+        source_links = " ".join(f"<a href='{escape(str(item.get('url', '')))}'>{escape(str(item.get('title', '规则文档')))}</a>" for item in result.get("sources", []))
+        self.messages.setHtml(f"<p>{escape(str(result.get('answer', '')))}</p><p>{escape(str(result.get('provider', '')))} DeepSeek API {source_links}</p>")
+        card = ResponseCard(result, self.message_host)
+        card.choice_selected.connect(self._submit_choice)
+        self._add_widget(card)
         self._set_busy(False)
-        self.response_displayed.emit(decision)
+        self.response_displayed.emit(str(result.get("decision", "unknown")))
 
     def _show_error(self, message: str) -> None:
-        self.messages.append(f"<p style='color:#b00020'><strong>运行错误：</strong>{escape(message)}</p>")
+        self._add_system_message(f"运行错误：{message}")
         self._set_busy(False)
         self.response_displayed.emit("error")
+
+    def _add_user_message(self, message: str) -> None:
+        label = QLabel(f"你：{message}", self.message_host)
+        label.setWordWrap(True)
+        label.setObjectName("userMessage")
+        self._add_widget(label)
 
     def _set_busy(self, busy: bool) -> None:
         self.send_button.setEnabled(not busy)
         self.question_input.setEnabled(not busy)
         if not busy:
             self.question_input.setFocus()
-
-    def append_user_message(self, message: str) -> None:
-        self.messages.append(f"<p><strong>你：</strong>{escape(message)}</p>")

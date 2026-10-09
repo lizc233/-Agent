@@ -4,7 +4,21 @@
 
 ## 当前状态
 
-项目已实现登录注册、本人订单工具调用、LangGraph Agent、可信规则检索、DeepSeek 在线生成、离线降级、桌宠交互和 EXE 打包。
+项目已实现登录注册、Supervisor 多 Agent 并行委派、声明式 Skills、本人订单工具调用、长期记忆、售后工单状态机、证据审核、可信规则检索、DeepSeek 在线生成、离线降级、本地 MCP 服务、桌宠交互和 EXE 打包。
+
+## 本地 MCP 工具服务
+
+用户登录后，桌面程序会在 `http://127.0.0.1:8765/mcp` 内嵌启动标准 Streamable HTTP MCP Server，无需额外运行后端进程。服务提供：
+
+- `get_my_order`：查询当前登录用户订单；
+- `list_my_orders_by_date`：查询当前登录用户指定日期订单；
+- `search_policy`：使用本地 `bge-m3` 检索带来源的客服规则；
+- `recall_memory`：召回当前登录用户的长期会话记忆；
+- `create_after_sales_case`：创建或复用售后工单；
+- `get_after_sales_case`：查询当前登录用户工单；
+- `transition_after_sales_case`：按状态机推进工单。
+
+订单、工单和记忆工具均由登录会话注入用户主键，MCP 参数中不提供 `user_id`，模型无法通过构造参数查询其他账户。服务只监听本机回环地址，并随桌面程序关闭。
 
 ## 设计原则
 
@@ -28,6 +42,15 @@
 ## 开发前准备
 
 1. 复制 `.env.example` 为 `.env`。
+
+## 评测
+
+```powershell
+.\.venv\Scripts\python.exe -m scripts.evaluate_agent
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+```
+
+固定课程模拟集的评测结果与适用边界见 `docs/Agent系统评测报告.md`。
 2. 填写 `DEEPSEEK_API_KEY`，不要提交 `.env`。
 3. 确保 `E:\AA_embedding` 中已有 `BAAI/bge-m3` 模型缓存。
 4. 客服规则位于 `data/knowledge/customer_rules.jsonl`，修改后会自动重建规则向量缓存。

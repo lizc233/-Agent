@@ -7,12 +7,16 @@ from pathlib import Path
 from PySide6.QtWidgets import QApplication, QMessageBox, QProgressDialog
 
 from backend.agent import CustomerServiceAgent
+from backend.case_tools import CaseTools
 from backend.auth import ensure_auth_schema
 from backend.config import PROJECT_ROOT, load_settings
 from backend.database import check_connection
 from backend.generation import build_answer_generator
+from backend.memory import ConversationMemory
+from backend.mcp_server import build_mcp_server, start_mcp_server
 from backend.planning import build_task_planner
 from backend.rules import RuleRetriever, load_rules
+from backend.skill_registry import SkillRegistry
 from backend.source_server import start_source_server
 from backend.tools import AgentSession, OrderTools
 from .chat_window import ChatWindow
@@ -75,12 +79,23 @@ def main() -> int:
     application.processEvents()
     logger.info("embedding loading dialog shown")
     try:
+        session = AgentSession(authenticated_user.id)
+        memory = ConversationMemory(settings, session)
+        memory_session_id, _ = memory.start_session()
+        order_tools = OrderTools(settings, session)
+        case_tools = CaseTools(settings, session)
+        rule_retriever = RuleRetriever(rules)
         agent = CustomerServiceAgent(
-            OrderTools(settings, AgentSession(authenticated_user.id)),
-            RuleRetriever(rules),
+            order_tools,
+            rule_retriever,
             build_answer_generator(settings),
             build_task_planner(settings),
+            memory=memory,
+            memory_session_id=memory_session_id,
+            skill_registry=SkillRegistry(PROJECT_ROOT / "skills"),
+            case_tools=case_tools,
         )
+        mcp = build_mcp_server(order_tools, case_tools, memory, rule_retriever)
         logger.info("agent initialized")
     except Exception as error:
         loading.close()
@@ -95,9 +110,17 @@ def main() -> int:
     if source_server is None:
         chat_window.messages.append("<p><em>规则来源端口 8000 已被占用；若已有规则服务运行，来源链接仍可访问。</em></p>")
     application.aboutToQuit.connect(lambda: source_server.shutdown() if source_server else None)
+    try:
+        mcp_http_server, mcp_thread = start_mcp_server(mcp)
+        logger.info("MCP server started")
+    except Exception as error:
+        mcp_http_server, mcp_thread = None, None
+        chat_window.messages.append(f"<p><em>MCP 工具服务未启动：{error}，客服主程序仍可使用。</em></p>")
+        logger.exception("MCP server failed to start")
+    application.aboutToQuit.connect(lambda: setattr(mcp_http_server, "should_exit", True) if mcp_http_server else None)
     pet.show()
     logger.info("desktop pet shown")
-    application._agent_references = (agent, controller, chat_window, pet, source_server, source_thread)
+    application._agent_references = (agent, controller, chat_window, pet, source_server, source_thread, mcp, mcp_http_server, mcp_thread)
     return application.exec()
 
 

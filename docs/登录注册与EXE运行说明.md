@@ -20,6 +20,8 @@
 
 必须保留整个 `KangarooCustomerAgent` 文件夹，不能只复制单个 EXE。`.env` 放在 EXE 同级目录，用于配置 MySQL 和 DeepSeek；不要将带真实密码的 `.env` 上传到 Git。
 
+首次打包后，如果目录中只有 `.env.example`，请把项目根目录中已经填写好的 `.env` 复制到 `dist/KangarooCustomerAgent/.env`。其中 `MYSQL_HOST`、`MYSQL_DATABASE`、`MYSQL_USER` 和 `MYSQL_PASSWORD` 必须填写；`DEEPSEEK_API_KEY` 可以为空，程序会使用离线回答模式。
+
 ## 重新打包
 
 双击 `build_exe.bat`。虚拟环境、pip 缓存、PyInstaller 缓存、临时目录和产物都位于 D 盘项目目录。

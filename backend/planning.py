@@ -22,6 +22,9 @@ class TaskPlan:
 
 
 class TaskPlanner:
+    def set_context(self, context: dict[str, object]) -> None:
+        pass
+
     def plan(self, question: str) -> TaskPlan:
         raise NotImplementedError
 
@@ -41,6 +44,8 @@ class OfflineTaskPlanner(TaskPlanner):
             return TaskPlan("bypass_identity", False, None, order_date, "unauthorized", "offline-planner")
         if any(value in text for value in ("食物中毒", "吃坏肚子", "食品安全")):
             return TaskPlan("high_risk_complaint", False, None, order_date, "high", "offline-planner")
+        if any(value in text for value in ("异物", "头发", "虫子", "塑料", "金属碎屑", "玻璃")):
+            return TaskPlan("food_foreign_object", True, order_match.group(0).upper() if order_match else None, order_date, "none", "offline-planner")
         return TaskPlan("unknown", True, order_match.group(0).upper() if order_match else None, order_date, "none", "offline-planner")
 
 
@@ -50,6 +55,10 @@ class DeepSeekTaskPlanner(TaskPlanner):
     def __init__(self, settings: Settings, timeout_seconds: float = 20.0) -> None:
         self.settings = settings
         self.timeout_seconds = timeout_seconds
+        self.context: dict[str, object] = {}
+
+    def set_context(self, context: dict[str, object]) -> None:
+        self.context = context
 
     def plan(self, question: str) -> TaskPlan:
         today = date.today().isoformat()
@@ -59,7 +68,7 @@ class DeepSeekTaskPlanner(TaskPlanner):
             "response_format": {"type": "json_object"},
             "messages": [
                 {"role": "system", "content": f"你是外卖客服Agent规划器，只提取任务，不回答。系统当前日期是{today}。返回JSON字段：intent、needs_order、order_code、order_date、risk。order_date必须为YYYY-MM-DD；未提及则null；用户只说月日时，选择最近且不晚于当前日期的对应日期。intent从外卖客服业务中选择，包括refund、cancel_order、delivery_timeout、delivery_incident_theft、delivery_incident_damage、food_foreign_object、food_safety、food_quality、missing_items、wrong_order、wrong_items、payment_issue、refund_status、after_sales、order_lookup、unknown、bypass_identity、high_risk_complaint。risk只能为none、unauthorized、high。不得生成SQL或用户ID。"},
-                {"role": "user", "content": question},
+                {"role": "user", "content": json.dumps({"current_message": question, "conversation_context": self.context, "instruction": "上下文中的问题类型只是参考，不得限制当前问题的开放式判断；当前表达与旧标签冲突时以当前表达为准。"}, ensure_ascii=False, default=str)},
             ],
         }
         response = httpx.post(f"{self.settings.deepseek_base_url}/chat/completions", headers={"Authorization": f"Bearer {self.settings.deepseek_api_key}"}, json=payload, timeout=self.timeout_seconds)
@@ -82,6 +91,10 @@ class FallbackTaskPlanner(TaskPlanner):
     def __init__(self, online: TaskPlanner, offline: TaskPlanner) -> None:
         self.online = online
         self.offline = offline
+
+    def set_context(self, context: dict[str, object]) -> None:
+        self.online.set_context(context)
+        self.offline.set_context(context)
 
     def plan(self, question: str) -> TaskPlan:
         try:

@@ -20,7 +20,10 @@ load_dotenv(APP_ROOT / ".env")
 def _required(name: str) -> str:
     value = os.getenv(name, "").strip()
     if not value or value.startswith("your_"):
-        raise ValueError(f"Missing local configuration: {name}")
+        raise ValueError(
+            f"缺少本地配置 {name}。请将项目目录中的 .env 复制到 EXE 同目录：{APP_ROOT / '.env'}，"
+            f"然后填写 {name}。模板位置：{APP_ROOT / '.env.example'}"
+        )
     return value
 
 
