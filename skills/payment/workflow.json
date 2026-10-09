@@ -1,0 +1,9 @@
+{
+  "name": "payment",
+  "description": "处理支付失败、重复扣款、支付状态不一致和原路退款问题",
+  "intents": ["PAYMENT_FAILED", "DUPLICATE_CHARGE", "PAYMENT_STATUS_CONFLICT"],
+  "allowed_tools": ["get_my_order", "search_policy", "recall_memory", "handoff_human"],
+  "required_evidence": ["current_user_order", "payment_policy"],
+  "escalation_conditions": ["重复扣款", "支付状态冲突", "账户疑似被盗"],
+  "prohibited_promises": ["索要支付密码或验证码", "修改支付状态", "查看其他用户支付信息"]
+}

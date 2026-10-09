@@ -1,0 +1,9 @@
+{
+  "name": "refund",
+  "description": "处理退款进度、退款条件、支付原路退回和退款失败问题",
+  "intents": ["REFUND_REQUEST", "REFUND_PROGRESS", "REFUND_FAILED"],
+  "allowed_tools": ["get_my_order", "search_policy", "recall_memory", "create_after_sales_case", "handoff_human"],
+  "required_evidence": ["current_user_order", "refund_policy"],
+  "escalation_conditions": ["重复扣款", "退款记录与支付记录冲突", "用户声称资金被盗"],
+  "prohibited_promises": ["承诺退款必定通过", "虚构到账时间", "要求提供支付密码"]
+}

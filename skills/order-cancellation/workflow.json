@@ -1,0 +1,9 @@
+{
+  "name": "order-cancellation",
+  "description": "处理订单取消条件、取消失败和商家取消后的售后咨询",
+  "intents": ["CANCEL_ORDER", "CANCEL_FAILED", "MERCHANT_CANCELLED"],
+  "allowed_tools": ["get_my_order", "search_policy", "recall_memory", "create_after_sales_case", "handoff_human"],
+  "required_evidence": ["current_user_order", "cancellation_policy"],
+  "escalation_conditions": ["订单状态与取消记录冲突", "取消后仍扣款"],
+  "prohibited_promises": ["假装已取消订单", "绕过订单状态", "承诺退款必定即时到账"]
+}

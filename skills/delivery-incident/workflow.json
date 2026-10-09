@@ -1,0 +1,9 @@
+{
+  "name": "delivery-incident",
+  "description": "处理超时、洒漏、丢失、误取、疑似偷吃等配送异常",
+  "intents": ["DELIVERY_TIMEOUT", "DELIVERY_DAMAGE", "DELIVERY_LOST", "DELIVERY_TAMPERING"],
+  "allowed_tools": ["get_my_order", "list_my_today_orders", "search_policy", "recall_memory", "create_after_sales_case", "handoff_human"],
+  "required_evidence": ["current_user_order", "delivery_incident_policy"],
+  "escalation_conditions": ["人身威胁", "证据冲突", "疑似违法行为"],
+  "prohibited_promises": ["未经核验直接认定骑手责任", "保证固定赔偿金额", "泄露骑手隐私"]
+}

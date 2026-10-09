@@ -1,0 +1,9 @@
+{
+  "name": "food-safety",
+  "description": "处理异物、变质、过敏、食用后不适等食品安全问题",
+  "intents": ["FOREIGN_OBJECT", "SPOILED_FOOD", "ALLERGY", "HEALTH_RISK"],
+  "allowed_tools": ["get_my_order", "list_my_today_orders", "search_policy", "recall_memory", "create_after_sales_case", "handoff_human"],
+  "required_evidence": ["current_user_order", "food_safety_policy"],
+  "escalation_conditions": ["用户身体不适", "疑似群体食品安全事件", "用户要求医学诊断"],
+  "prohibited_promises": ["提供医学诊断", "要求继续食用验证", "保证赔偿结果"]
+}
